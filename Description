@@ -1,20 +1,54 @@
-Description:
+Lambda Function
+-------------------------------------------------------------------------------------------------------------------------------
+import json
+import boto3
+def lambda_handler(event, context):
+    client = boto3.client('glue')
+    bucket_name = event['Records'][0]['s3']['bucket']['name']
+    object_key = event['Records'][0]['s3']['object']['key']
+    fullpath = 's3://{}/{}'.format(bucket_name, object_key)
+    print(fullpath)
+    print("----------------------------------------")
+    response = client.start_job_run(
+    JobName='gluecsv',
+    Arguments={
+        '--buck':bucket_name,
+        '--obj':object_key,
+        '--s3_path':fullpath
+    })
+-----------------------------------------------------------------------------------------------------------------------
+Glue job
+-----------------------------------------------------------------------------------------------------------------------
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.sql.functions import *
 
-This project showcases an event-driven ETL (Extract, Transform, Load) pipeline orchestrated using AWS Lambda, AWS Glue, and Apache Spark. The pipeline automates the processing and storage of data, with results stored in external databases such as MySQL Workbench or Snowflake.
+## @params: [JOB_NAME]
+args = getResolvedOptions(sys.argv, ['buck','obj','s3_path'])
+bucket=args['buck']
+file=args['obj']
+data=args['s3_path']
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+import os
+import re
+filename_with_extension = os.path.basename(data)
+filename_without_extension = os.path.splitext(filename_with_extension)[0]
+tab=re.sub(r'[^A-Za-z0-9]', '', filename_without_extension)
 
-Key Features:
+df = spark.read.format("csv").option("header","true").option("inferSchema","true").load(data)
+ndf = df.withColumn("ts",current_timestamp())
 
-Utilizes AWS Lambda and Glue for orchestration of the ETL pipeline.
-Data processing is performed using Apache Spark for efficient and scalable processing.
-Results are stored in external databases like MySQL Workbench or Snowflake for easy access and analysis.
-How It Works:
+myconf = {
+    "url":"jdbc:mysql://mysqldb.czegw88igo9k.ap-south-1.rds.amazonaws.com:3306/poojadb",
+    "driver":"com.mysql.cj.jdbc.Driver",
+    "user":"myuser",
+    "password":"mypassword"
+}
 
-A Lambda function, developed with boto3, is created to handle triggers from an S3 bucket.
-When a file is uploaded to the S3 bucket, a trigger is activated, initiating the Lambda function.
-The Lambda function then triggers a Glue job written in Spark language to process the uploaded file.
-Once processed, the file is automatically added to the specified database platform, whether it be SQL Workbench, Snowflake, Oracle, or others.
-Benefits:
-
-Automation eliminates the need for manual intervention in the data loading process.
-Increases efficiency and reduces the time required for data processing and storage.
-Provides a scalable solution for handling large volumes of data seamlessly.
+ndf.write.mode("append").format("jdbc").options(**myconf).option("dbtable",tab).save()
